@@ -40,7 +40,7 @@ def url_with_page(url, page):
 
 
 def get_total_pages(soup):
-    last_page_link = soup.find("a", string=re.compile("Dernière page"))
+    last_page_link = soup.find("a", string=re.compile("Derniere page"))
     if last_page_link and last_page_link.get("href"):
         match = re.search(r"page=(\d+)", last_page_link["href"])
         if match:
@@ -49,4 +49,6 @@ def get_total_pages(soup):
 
 
 def parse_listings(html):
-    soup =
+    soup = BeautifulSoup(html, "html.parser")
+    listings = {}
+    for link in soup.find
