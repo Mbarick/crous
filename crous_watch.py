@@ -29,8 +29,8 @@ HEADERS = {
 }
 
 ACCOMMODATION_RE = re.compile(r"/tools/\d+/accommodations/(\d+)")
-LOOP_DURATION = 9 * 60  # 9 minutes de boucle
-LOOP_INTERVAL = 30       # vérification toutes les 30 secondes
+LOOP_DURATION = 9 * 60
+LOOP_INTERVAL = 10
 
 
 def url_with_page(url, page):
@@ -160,7 +160,7 @@ def notify_email(new_items):
 def check_once(seen):
     current = fetch_all_listings(SEARCH_URL)
     if not current:
-        print("Site inaccessible, on reessaie dans 30s.")
+        print("Site inaccessible, on reessaie dans 10s.")
         return seen
     new_ids = set(current) - set(seen)
     if new_ids:
