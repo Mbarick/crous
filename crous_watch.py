@@ -29,6 +29,8 @@ HEADERS = {
 }
 
 ACCOMMODATION_RE = re.compile(r"/tools/\d+/accommodations/(\d+)")
+LOOP_DURATION = 9 * 60  # 9 minutes de boucle
+LOOP_INTERVAL = 30       # vérification toutes les 30 secondes
 
 
 def url_with_page(url, page):
@@ -74,19 +76,22 @@ def parse_listings(html):
 
 
 def fetch_all_listings(start_url):
-    resp = requests.get(start_url, headers=HEADERS, timeout=20)
-    resp.raise_for_status()
+    try:
+        resp = requests.get(start_url, headers=HEADERS, timeout=20)
+        resp.raise_for_status()
+    except Exception as e:
+        print("Erreur acces site: " + str(e))
+        return {}
     listings, soup = parse_listings(resp.text)
     total_pages = min(get_total_pages(soup), MAX_PAGES)
-    print(f"{total_pages} page(s) a parcourir.")
     for page in range(2, total_pages + 1):
         time.sleep(1)
         page_url = url_with_page(start_url, page)
         try:
             resp = requests.get(page_url, headers=HEADERS, timeout=20)
             resp.raise_for_status()
-        except requests.RequestException as e:
-            print(f"Erreur page {page}: {e}")
+        except Exception as e:
+            print("Erreur page " + str(page) + ": " + str(e))
             continue
         page_listings, _ = parse_listings(resp.text)
         listings.update(page_listings)
@@ -116,7 +121,6 @@ def format_listing(item):
 
 def notify_ntfy(new_items):
     if not NTFY_TOPIC:
-        print("NTFY_TOPIC non defini, notification ntfy ignoree.")
         return
     body = "\n\n".join(format_listing(item) for item in new_items.values())
     first_url = next(iter(new_items.values()))["url"]
@@ -130,17 +134,16 @@ def notify_ntfy(new_items):
     }
     try:
         resp = requests.post("https://ntfy.sh/", json=payload, timeout=10)
-        print("ntfy status: " + str(resp.status_code) + " - " + resp.text[:200])
+        print("ntfy status: " + str(resp.status_code))
     except Exception as e:
-        print("Erreur envoi ntfy: " + str(e))
+        print("Erreur ntfy: " + str(e))
 
 
 def notify_email(new_items):
     if not (GMAIL_ADDRESS and GMAIL_APP_PASSWORD and NOTIFY_EMAIL_TO):
         return
-    body = "Nouveaux logements Crous disponibles :\n\n"
+    body = "Nouveaux logements Crous :\n\n"
     body += "\n\n".join(format_listing(item) for item in new_items.values())
-    body += "\n\nRecherche surveillee : " + SEARCH_URL
     msg = MIMEText(body, "plain", "utf-8")
     msg["Subject"] = "Nouveau(x) logement(s) Crous (" + str(len(new_items)) + ")"
     msg["From"] = GMAIL_ADDRESS
@@ -151,25 +154,41 @@ def notify_email(new_items):
             server.sendmail(GMAIL_ADDRESS, [NOTIFY_EMAIL_TO], msg.as_string())
         print("Email envoye.")
     except Exception as e:
-        print("Erreur envoi email: " + str(e))
+        print("Erreur email: " + str(e))
+
+
+def check_once(seen):
+    current = fetch_all_listings(SEARCH_URL)
+    if not current:
+        print("Site inaccessible, on reessaie dans 30s.")
+        return seen
+    new_ids = set(current) - set(seen)
+    if new_ids:
+        new_items = {acc_id: current[acc_id] for acc_id in new_ids}
+        print(str(len(new_items)) + " nouveau(x) logement(s) !")
+        for item in new_items.values():
+            print(" - " + item["name"])
+        notify_ntfy(new_items)
+        notify_email(new_items)
+    else:
+        print("Aucun nouveau logement.")
+    save_seen(current)
+    return current
 
 
 def main():
-    current = fetch_all_listings(SEARCH_URL)
-    print(str(len(current)) + " logement(s) trouve(s) au total sur la recherche.")
     seen = load_seen()
-    new_ids = set(current) - set(seen)
-    if not new_ids:
-        print("Aucun nouveau logement depuis la derniere verification.")
-        save_seen(current)
-        return
-    new_items = {acc_id: current[acc_id] for acc_id in new_ids}
-    print(str(len(new_items)) + " nouveau(x) logement(s) repere(s) :")
-    for item in new_items.values():
-        print(" - " + item["name"] + " (" + item["url"] + ")")
-    notify_ntfy(new_items)
-    notify_email(new_items)
-    save_seen(current)
+    start = time.time()
+    while time.time() - start < LOOP_DURATION:
+        print("--- Verification ---")
+        seen = check_once(seen)
+        elapsed = time.time() - start
+        remaining = LOOP_DURATION - elapsed
+        if remaining > LOOP_INTERVAL:
+            time.sleep(LOOP_INTERVAL)
+        else:
+            break
+    print("Fin du run.")
 
 
 if __name__ == "__main__":
